@@ -1,14 +1,59 @@
 const express = require('express');
+const session = require('express-session');
+const FileStore = require('session-file-store')(session);
 const http = require('http');
 const { execSync } = require('child_process');
+const passport = require('passport');
+const LdapStrategy = require('passport-ldapauth');
+const flash = require('connect-flash');
+const bodyParser = require('body-parser');
+const cookieParser = require('cookie-parser');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 
 const port = 8080;
 
+app.use(cookieParser('secret'));
+app.use(
+  session({
+    cookie: { maxAge: 60000 },
+    resave: false,
+    saveUninitialized: false,
+    secret: process.env.SESSION_SECRET,
+    store: new FileStore({}),
+  }),
+);
+app.use(flash());
+
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(passport.initialize());
+app.use(passport.session());
+
 app.set('views', '.');
 app.set('view engine', 'ejs');
+
+passport.use(
+  new LdapStrategy({
+    server: {
+      url: process.env.LDAP_URL,
+      bindDN: process.env.LDAP_BIND_DN,
+      bindCredentials: process.env.LDAP_BIND_CREDENTIALS,
+      searchBase: process.env.LDAP_SEARCH_BASE,
+      searchFilter: process.env.LDAP_SEARCH_FILTER,
+    },
+  }),
+);
+
+passport.serializeUser(function (user, done) {
+  done(null, user);
+});
+
+passport.deserializeUser(function (user, done) {
+  done(null, user);
+});
 
 const oc = (command) => JSON.parse(execSync(`oc ${command}`).toString()).items;
 
@@ -147,8 +192,16 @@ const mergeDcWithCephPvc = (dcs) => {
   return pvcs;
 };
 
-app.get('//', (req, res) => res.redirect('/databases'));
-app.get('/databases', (req, res) => {
+const isAuth = (req, res, next) => {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+
+  return res.redirect('/');
+};
+
+app.get('//', (req, res) => res.render('index', { title: 'Login', message: req.flash('error'), loginPage: true }));
+app.get('/databases', isAuth, (req, res) => {
   let items = [];
   ['mysql', 'postgresql', 'mongodb'].forEach((type) => {
     items = fetchDatabases(type, items);
@@ -159,13 +212,28 @@ app.get('/databases', (req, res) => {
     title: 'Databases',
     alert: 'An item is marked as backup only if the DC name is equal to the PVC name',
     items,
+    logged: true,
   });
 });
 
-app.get('/nfs', (req, res) => {
+app.get('/nfs', isAuth, (req, res) => {
   let items = fetchNfs(false);
   items = fetchNfs(true, items);
   return res.render('index', { title: 'NFS', items });
+});
+
+app.post(
+  '/login',
+  passport.authenticate('ldapauth', {
+    successRedirect: '/databases',
+    failureRedirect: '/',
+    failureFlash: true,
+  }),
+);
+
+app.get('/logout', (req, res) => {
+  req.logout();
+  res.redirect('/');
 });
 
 app.use('*', (req, res) => res.status(404).send('NOT FOUND !'));

@@ -10,7 +10,6 @@
 
 # production
 /build
-/sessions
 
 # misc
 .DS_Store
@@ -23,5 +22,9 @@ db.test.sqlite
 
 # IDE Configs
 /.idea
+/sessions
 
 TODO.md
+
+Dockerfile
+.git
